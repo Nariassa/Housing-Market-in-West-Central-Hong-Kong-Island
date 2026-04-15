@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>HK Property Explorer – Working Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Roboto, sans-serif; }
+        body { background: #eef2f5; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        .header { background: #1e3a2f; color: white; padding: 0.8rem 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .header h1 i { margin-right: 10px; color: #ffd966; }
+        .filter-panel { background: white; padding: 1rem 1.5rem; border-bottom: 1px solid #ddd; display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+        .filter-group { display: flex; flex-direction: column; gap: 0.3rem; min-width: 130px; }
+        .filter-group label { font-size: 0.7rem; font-weight: 600; color: #2c5a4a; }
+        .filter-group input, .filter-group select { padding: 0.4rem 0.6rem; border: 1px solid #ccc; border-radius: 20px; font-size: 0.8rem; }
+        .search-group { flex: 2; min-width: 200px; }
+        .btn { background: #2a7f6e; border: none; color: white; padding: 0.4rem 1rem; border-radius: 30px; font-weight: 600; cursor: pointer; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-reset { background: #5f6c7a; }
+        .stats { background: #e9ecef; border-radius: 30px; padding: 0.2rem 1rem; font-size: 0.8rem; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+        .action-group { display: flex; gap: 10px; align-items: center; margin-left: auto; }
+        .map-container { flex: 1; position: relative; }
+        #map { height: 100%; width: 100%; z-index: 1; }
+        .leaflet-popup-content { min-width: 220px; font-size: 12px; }
+        .footer-note { position: absolute; bottom: 10px; right: 12px; background: rgba(0,0,0,0.6); color: white; padding: 3px 10px; border-radius: 20px; font-size: 11px; z-index: 1000; pointer-events: none; }
+        @media (max-width: 780px) { .filter-panel { flex-direction: column; align-items: stretch; } .action-group { margin-left: 0; } }
+    </style>
+</head>
+<body>
+<div class="header">
+    <h1><i class="fas fa-map-marker-alt"></i> Hong Kong Property Atlas – Live Map</h1>
+    <p>📍 Central & Western | Search & filter properties – markers appear instantly</p>
+</div>
+
+<div class="filter-panel">
+    <div class="filter-group search-group">
+        <label><i class="fas fa-search"></i> Search (name / address)</label>
+        <input type="text" id="searchInput" placeholder="e.g., Elgin, Pacific, Arbuthnot" autocomplete="off">
+    </div>
+    <div class="filter-group">
+        <label><i class="fas fa-dollar-sign"></i> Price (10k HKD)</label>
+        <input type="number" id="minPrice" placeholder="Min" step="10">
+        <input type="number" id="maxPrice" placeholder="Max" step="10" style="margin-top: 4px;">
+    </div>
+    <div class="filter-group">
+        <label><i class="fas fa-vector-square"></i> Saleable Area (sq.ft.)</label>
+        <input type="number" id="minArea" placeholder="Min" step="10">
+        <input type="number" id="maxArea" placeholder="Max" step="10" style="margin-top: 4px;">
+    </div>
+    <div class="filter-group">
+        <label><i class="fas fa-building"></i> Building Age (years)</label>
+        <input type="number" id="minAge" placeholder="Min" step="1">
+        <input type="number" id="maxAge" placeholder="Max" step="1" style="margin-top: 4px;">
+    </div>
+    <div class="action-group">
+        <button id="applyFilterBtn" class="btn"><i class="fas fa-sliders-h"></i> Apply Filters</button>
+        <button id="resetFilterBtn" class="btn btn-reset"><i class="fas fa-undo-alt"></i> Reset</button>
+        <div id="resultStats" class="stats"><i class="fas fa-home"></i> <span id="propertyCount">0</span> properties</div>
+    </div>
+</div>
+
+<div class="map-container">
+    <div id="map"></div>
+    <div class="footer-note">📍 Cluster enabled | Click marker for details</div>
+</div>
+
+<script>
+    // --------------------------------------------------------------
+    // FULL CLEAN DATASET (extracted from your CSV, only valid lat/lng)
+    // --------------------------------------------------------------
+    const propertyData = [
+        { name: "18 SHELLEY STREET", address: "18 SHELLEY STREET", price: 685, area: 464, age: 40, lat: 22.281442, lng: 114.152991 },
+        { name: "Lilian Court", address: "6-8 SHELLEY STREET", price: 538, area: 333, age: 24, lat: 22.281865, lng: 114.153329 },
+        { name: "Lilian Court", address: "6-8 SHELLEY STREET", price: 595, area: 333, age: 23, lat: 22.281865, lng: 114.153329 },
+        { name: "Felicity Building", address: "9-13 SHELLEY STREET", price: 490, area: null, age: 39, lat: 22.281688, lng: 114.152795 },
+        { name: "9-13 SHELLEY STREET", address: "9-13 SHELLEY STREET", price: 720, area: 370, age: 51, lat: 22.281688, lng: 114.152795 },
+        { name: "Arbuthnot House", address: "10-14 ARBUTHNOT ROAD", price: 900, area: 539, age: 39, lat: 22.279982, lng: 114.154755 },
+        { name: "Arbuthnot House", address: "10-14 ARBUTHNOT ROAD", price: 1350, area: 539, age: 38, lat: 22.279982, lng: 114.154755 },
+        { name: "Bel Mount Garden", address: "15 ARBUTHNOT ROAD", price: 980, area: 511, age: 24, lat: 22.279597, lng: 114.154444 },
+        { name: "Bel Mount Garden", address: "15 ARBUTHNOT ROAD", price: 868, area: 511, age: 23, lat: 22.279597, lng: 114.154444 },
+        { name: "Mandarin Court", address: "16 ARBUTHNOT ROAD", price: 750, area: 447, age: 30, lat: 22.279891, lng: 114.154792 },
+        { name: "Fortune Court", address: "18-20 ARBUTHNOT ROAD", price: 720, area: 393, age: 23, lat: 22.279793, lng: 114.154723 },
+        { name: "Shiu King Court", address: "4-8 ARBUTHNOT ROAD", price: 748, area: 481, age: 29, lat: 22.280136, lng: 114.154688 },
+        { name: "Elgin Street46-50", address: "Elgin Street46-50", price: 725, area: 321, age: 50, lat: 22.280973, lng: 114.152969 },
+        { name: "Winly Building", address: "1-5 ELGIN STREET", price: 567, area: 309, age: 37, lat: 22.283016, lng: 114.152458 },
+        { name: "10 Elgin Street", address: "10 Elgin Street", price: 700, area: 389, age: 53, lat: 22.282772, lng: 114.152562 },
+        { name: "No. 14E-14F Elgin", address: "No. 14E-14F, Elgin Street", price: 630, area: 310, age: 43, lat: 22.282646, lng: 114.152504 },
+        { name: "Tai Lee Building", address: "15-19 ELGIN STREET", price: 550, area: null, age: 45, lat: 22.282814, lng: 114.152284 },
+        { name: "18 Elgin Street", address: "18 Elgin Street", price: 738, area: 474, age: 58, lat: 22.282056, lng: 114.152374 },
+        { name: "2-4 Elgin Street", address: "2-4 Elgin Street", price: 523, area: 332, age: 51, lat: 22.283109, lng: 114.15266 },
+        { name: "21 Elgin Street", address: "21 Elgin Street", price: 880, area: 449, age: 48, lat: 22.28203, lng: 114.152145 },
+        { name: "27-29 Elgin Street", address: "27-29 Elgin Street", price: 600, area: 320, age: 47, lat: 22.281971, lng: 114.152226 },
+        { name: "Million City", address: "28 ELGIN STREET", price: 680, area: 395, age: 20, lat: 22.281867, lng: 114.152476 },
+        { name: "One Pacific Heights", address: "1 WO FUNG STREET", price: 1180, area: 568, age: 9, lat: 22.286582, lng: 114.146699 },
+        { name: "One Pacific Heights", address: "1 WO FUNG STREET", price: 1115, area: 568, age: 9, lat: 22.286582, lng: 114.146699 },
+        { name: "One Pacific Heights", address: "1 WO FUNG STREET", price: 1525, area: 750, age: 8, lat: 22.286582, lng: 114.146699 },
+        { name: "1-3 Shin Hing Street", address: "1-3 Shin Hing Street", price: 560, area: 353, age: 43, lat: 22.28416, lng: 114.152253 },
+        { name: "4 Shin Hing Street", address: "4 Shin Hing Street", price: 600, area: 386, age: 48, lat: 22.28416, lng: 114.152253 },
+        { name: "Wah Shin House", address: "6-10 SHIN HING STREET", price: 300, area: 226, age: 37, lat: 22.284041, lng: 114.15204 },
+        { name: "30A Graham Street", address: "30A Graham Street", price: 800, area: 424, age: 53, lat: 22.28296, lng: 114.153501 },
+        { name: "Kar Ho Building", address: "35-39 GRAHAM STREET", price: 500, area: 283, age: 29, lat: 22.282849, lng: 114.153317 },
+        { name: "Garley Building", address: "45-53A GRAHAM STREET", price: 600, area: 330, age: 33, lat: 22.282456, lng: 114.152691 },
+        { name: "5 Graham Street", address: "5 Graham Street", price: 420, area: 292, age: 46, lat: 22.283867, lng: 114.154402 },
+        { name: "15-19 SQUARE STREET", address: "15-19 SQUARE STREET", price: 448, area: 244, age: 36, lat: 22.284184, lng: 114.149798 },
+        { name: "Rich View Terrace", address: "26 SQUARE STREET", price: 750, area: 393, age: 26, lat: 22.28444, lng: 114.149238 },
+        { name: "43-45 SQUARE STREET", address: "43-45 SQUARE STREET", price: 360, area: 228, age: 31, lat: 22.284414, lng: 114.149469 },
+        { name: "Tai Shun Building", address: "5 SQUARE STREET", price: 330, area: null, age: 47, lat: 22.284184, lng: 114.149798 },
+        { name: "7-11 SQUARE STREET", address: "7-11 SQUARE STREET", price: 520, area: 381, age: 44, lat: 22.283746, lng: 114.156793 },
+        { name: "14-18 Staunton Street", address: "14-18 Staunton Street", price: 520, area: 269, age: 43, lat: 22.281831, lng: 114.152783 },
+        { name: "Villa Serene", address: "3 STAUNTON STREET", price: 690, area: 333, age: 18, lat: 22.281622, lng: 114.153352 },
+        { name: "40 Staunton Street", address: "40 Staunton Street", price: 690, area: 350, age: 53, lat: 22.282537, lng: 114.152186 },
+        { name: "Wah Yee Lau", address: "51-57 STAUNTON STREET", price: 683, area: 427, age: 46, lat: 22.282805, lng: 114.152133 },
+        { name: "Centre Point", address: "72 STAUNTON STREET", price: 4508, area: null, age: 7, lat: 22.283039, lng: 114.151483 },
+        { name: "Dawning Height", address: "80 STAUNTON STREET", price: 1040, area: 498, age: 17, lat: 22.283191, lng: 114.151344 },
+        { name: "8 Tai On Terrace", address: "8 Tai On Terrace", price: 550, area: 452, age: 50, lat: 22.284347, lng: 114.14712 },
+        { name: "Goodview Court", address: "1 TAI PING SHAN STREET", price: 853, area: 522, age: 21, lat: 22.284472, lng: 114.149021 },
+        { name: "View Villa", address: "38 TAI PING SHAN STREET", price: 635, area: 367, age: 18, lat: 22.284918, lng: 114.147918 },
+        { name: "Po Wan Building", address: "6 TAI PING SHAN STREET", price: 250, area: 173, age: 32, lat: 22.284242, lng: 114.148754 },
+        { name: "No. 11-13 Old Bailey", address: "No. 11-13, Old Bailey Street", price: 415, area: 328, age: 50, lat: 22.281619, lng: 114.153537 },
+        { name: "Sunrise House", address: "21-31 OLD BAILEY STREET", price: 800, area: 462, age: 42, lat: 22.28084, lng: 114.153128 },
+        { name: "Ho Fook Building", address: "9 OLD BAILEY STREET", price: 520, area: 288, age: 31, lat: 22.281745, lng: 114.153538 },
+        { name: "Sing Fai Building", address: "8-12 WILMER STREET", price: 630, area: 424, age: 39, lat: 22.287496, lng: 114.144632 },
+        { name: "Sunwise Building", address: "112-114 WELLINGTON STREET", price: 408, area: 283, age: 42, lat: 22.283269, lng: 114.154177 },
+        { name: "Tsang Chiu Ho Building", address: "160-164 WELLINGTON STREET", price: 1221, area: 407, age: 48, lat: 22.284207, lng: 114.15348 },
+        { name: "Cherry Crest", address: "3 KUI IN FONG", price: 1575, area: 772, age: 13, lat: 22.283782, lng: 114.148696 },
+        { name: "Greenville", address: "2 GLENEALY", price: 1485, area: 618, age: 30, lat: 22.27976, lng: 114.155071 },
+        { name: "Glenealy Building", address: "7 GLENEALY", price: 640, area: 374, age: 38, lat: 22.279429, lng: 114.154816 },
+        { name: "Talon Tower", address: "37 CONNAUGHT ROAD WEST", price: 900, area: 488, age: 16, lat: 22.288024, lng: 114.148619 },
+        { name: "Upton", address: "180 CONNAUGHT ROAD WEST", price: 1860, area: 670, age: 3, lat: 22.287453, lng: 114.13672 },
+        { name: "Sea View Mansion", address: "82-87 CONNAUGHT ROAD WEST", price: 535, area: 302, age: 40, lat: 22.288134, lng: 114.146118 },
+        { name: "Queen's Terrace", address: "1 QUEEN STREET", price: 770, area: 393, age: 15, lat: 22.287184, lng: 114.147002 },
+        { name: "Centre Stage", address: "108 HOLLYWOOD ROAD", price: 1080, area: 443, age: 12, lat: 22.283759, lng: 114.150786 },
+        { name: "Kam Ho Mansion", address: "157-163 HOLLYWOOD ROAD", price: 518, area: 302, age: 39, lat: 22.284329, lng: 114.150064 },
+        { name: "Kelford Mansion", address: "160-168 HOLLYWOOD ROAD", price: 905, area: 509, age: 31, lat: 22.284632, lng: 114.149393 },
+        { name: "Wah Koon Building", address: "181-199 HOLLYWOOD ROAD", price: 510, area: 313, age: 40, lat: 22.28477, lng: 114.149625 },
+        { name: "Hollywood Building", address: "186-190 HOLLYWOOD ROAD", price: 600, area: 470, age: 54, lat: 22.285273, lng: 114.148398 },
+        { name: "Kee On Building", address: "198-202 HOLLYWOOD ROAD", price: 510, area: 273, age: 26, lat: 22.285296, lng: 114.147872 },
+        { name: "Tai Ping Mansion", address: "208-214 HOLLYWOOD ROAD", price: 650, area: 481, age: 44, lat: 22.285435, lng: 114.147686 },
+        { name: "Curios Court", address: "209-223 HOLLYWOOD ROAD", price: 568, area: 350, age: 38, lat: 22.285381, lng: 114.148789 },
+        { name: "Amber Lodge", address: "23 HOLLYWOOD ROAD", price: 590, area: 274, age: 20, lat: 22.282121, lng: 114.153991 },
+        { name: "Wing On Building", address: "38-40 HOLLYWOOD ROAD", price: 670, area: 465, age: 45, lat: 22.282214, lng: 114.15319 },
+        { name: "Po Hing Mansion", address: "1-6 WA NING LANE", price: 730, area: 386, age: 52, lat: 22.284631, lng: 114.146798 },
+        { name: "The Bellevue Place", address: "8 U LAM TERRACE", price: 778, area: 377, age: 19, lat: 22.28336, lng: 114.149161 },
+        { name: "Wing Yau House", address: "53-55 SAI STREET", price: 650, area: 418, age: 50, lat: 22.284791, lng: 114.148452 },
+        { name: "Chong Yuen", address: "14-16 HOSPITAL ROAD", price: 1129, area: 767, age: 40, lat: 22.284126, lng: 114.146513 },
+        { name: "Chung Yin Court", address: "17 HOSPITAL ROAD", price: 480, area: 313, age: 27, lat: 22.285529, lng: 114.145631 },
+        { name: "Winner Court", address: "18 HOSPITAL ROAD", price: 1100, area: 780, age: 29, lat: 22.284249, lng: 114.14656 },
+        { name: "Centre Place", address: "1 HIGH STREET", price: 1435, area: 638, age: 11, lat: 22.284845, lng: 114.146095 },
+        { name: "Caine Tower", address: "55 ABERDEEN STREET", price: 998, area: 433, age: 18, lat: 22.282588, lng: 114.151297 }
+    ];
+
+    // Remove entries without area (optional) but keep them; for filtering, treat area null as no restriction
+    let allProperties = propertyData;
+
+    // Initialize map
+    const map = L.map('map').setView([22.284, 114.158], 15);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; CartoDB',
+        subdomains: 'abcd',
+        maxZoom: 19
+    }).addTo(map);
+
+    let markerCluster = L.markerClusterGroup();
+    let currentMarkers = [];
+
+    function buildPopup(p) {
+    const priceHKD = (p.price * 10000).toLocaleString();
+    return `<div class="property-popup" style="min-width:200px">
+                <strong>${p.name}</strong><br>
+                <i class="fas fa-map-pin"></i> ${p.address}<br>
+                <i class="fas fa-dollar-sign"></i> ${priceHKD} HKD<br>
+                <i class="fas fa-vector-square"></i> ${p.area ? p.area + ' sq.ft' : 'N/A'}<br>
+                <i class="fas fa-calendar-alt"></i> Age: ${p.age} years
+            </div>`;
+    }
+
+    function filterProperties() {
+        const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+        const minPrice = parseFloat(document.getElementById('minPrice').value);
+        const maxPrice = parseFloat(document.getElementById('maxPrice').value);
+        const minArea = parseFloat(document.getElementById('minArea').value);
+        const maxArea = parseFloat(document.getElementById('maxArea').value);
+        const minAge = parseFloat(document.getElementById('minAge').value);
+        const maxAge = parseFloat(document.getElementById('maxAge').value);
+
+        return allProperties.filter(p => {
+            // search
+            if (searchTerm && !(p.name.toLowerCase().includes(searchTerm) || p.address.toLowerCase().includes(searchTerm))) return false;
+            // price
+            if (!isNaN(minPrice) && p.price < minPrice) return false;
+            if (!isNaN(maxPrice) && p.price > maxPrice) return false;
+            // area (ignore if null)
+            if (p.area !== null && p.area !== undefined) {
+                if (!isNaN(minArea) && p.area < minArea) return false;
+                if (!isNaN(maxArea) && p.area > maxArea) return false;
+            } else if ((!isNaN(minArea) || !isNaN(maxArea))) {
+                // if area is missing but filter is active, exclude (optional)
+                return false;
+            }
+            // age
+            if (!isNaN(minAge) && p.age < minAge) return false;
+            if (!isNaN(maxAge) && p.age > maxAge) return false;
+            return true;
+        });
+    }
+
+    function updateMap() {
+        const filtered = filterProperties();
+        document.getElementById('propertyCount').innerText = filtered.length;
+        
+        // Clear existing clusters
+        markerCluster.clearLayers();
+        filtered.forEach(prop => {
+            if (prop.lat && prop.lng) {
+                const marker = L.marker([prop.lat, prop.lng]);
+                marker.bindPopup(buildPopup(prop));
+                markerCluster.addLayer(marker);
+            }
+        });
+        map.addLayer(markerCluster);
+        
+        // If only one result, zoom a bit closer
+        if (filtered.length === 1 && filtered[0].lat) {
+            map.setView([filtered[0].lat, filtered[0].lng], 16);
+        } else if (filtered.length > 0) {
+            // optional: fit bounds? skip to keep user view
+        }
+    }
+
+    // Event listeners
+    document.getElementById('applyFilterBtn').addEventListener('click', updateMap);
+    document.getElementById('resetFilterBtn').addEventListener('click', () => {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('minPrice').value = '';
+        document.getElementById('maxPrice').value = '';
+        document.getElementById('minArea').value = '';
+        document.getElementById('maxArea').value = '';
+        document.getElementById('minAge').value = '';
+        document.getElementById('maxAge').value = '';
+        updateMap();
+    });
+    
+    // Initial load
+    updateMap();
+</script>
+</body>
+</html>
